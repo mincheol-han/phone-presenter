@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#111318">
+<title>폰 프리젠터</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{
+  --bg:#0e1014; --panel:#181b22; --panel2:#20242d; --line:#2c313c;
+  --text:#eef1f6; --muted:#9aa3b2; --accent:#4f8cff; --accent2:#7c5cff;
+  --ok:#2ecc71; --warn:#ffb020; --bad:#ff4d4f; --red:#ff3b30;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Noto Sans KR',system-ui,sans-serif}
+button{font:inherit;color:inherit;border:0;cursor:pointer;background:none}
+input,select{font:inherit}
+.hidden{display:none!important}
+
+/* ================= HOST ================= */
+#host{position:fixed;inset:0;overflow:hidden;background:#000}
+#stage{position:absolute;inset:0;background:#000}
+#stage.idle{cursor:none}
+#frame{position:absolute;overflow:hidden;background:#111;perspective:1600px}
+#zoomLayer{position:absolute;inset:0;transition:transform .28s ease, filter .45s ease;will-change:transform}
+#slideBox{position:absolute;inset:0}
+.slide{position:absolute;inset:0;width:100%;height:100%;display:block;background:#fff;backface-visibility:hidden}
+video.slide{background:#000;object-fit:contain}
+.board{background:radial-gradient(ellipse at 50% 40%,#1d3b2f,#0f231b);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.18);font-size:3vw;font-weight:700}
+#drawCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+/* transitions */
+.in-fade{animation:inFade .6s ease both}.out-fade{animation:outFade .6s ease both}
+@keyframes inFade{from{opacity:0}}@keyframes outFade{to{opacity:0}}
+.in-slide{animation:inSlide .55s cubic-bezier(.2,.7,.2,1) both}.out-slide{animation:outSlide .55s cubic-bezier(.2,.7,.2,1) both}
+.in-slide-r{animation:inSlideR .55s cubic-bezier(.2,.7,.2,1) both}.out-slide-r{animation:outSlideR .55s cubic-bezier(.2,.7,.2,1) both}
+@keyframes inSlide{from{transform:translateX(100%)}}@keyframes outSlide{to{transform:translateX(-100%)}}
+@keyframes inSlideR{from{transform:translateX(-100%)}}@keyframes outSlideR{to{transform:translateX(100%)}}
+.in-zoom,.in-zoom-r{animation:inZoom .6s ease both}.out-zoom,.out-zoom-r{animation:outZoom .6s ease both}
+@keyframes inZoom{from{transform:scale(.55);opacity:0}}@keyframes outZoom{to{transform:scale(1.5);opacity:0}}
+.in-flip{animation:inFlip .7s ease both}.out-flip{animation:outFlip .35s ease-in both}
+.in-flip-r{animation:inFlipR .7s ease both}.out-flip-r{animation:outFlipR .35s ease-in both}
+@keyframes inFlip{0%,50%{transform:rotateY(-90deg)}100%{transform:none}}@keyframes outFlip{to{transform:rotateY(90deg)}}
+@keyframes inFlipR{0%,50%{transform:rotateY(90deg)}100%{transform:none}}@keyframes outFlipR{to{transform:rotateY(-90deg)}}
+.in-cube{animation:inCube .65s ease both;transform-origin:left center}.out-cube{animation:outCube .65s ease both;transform-origin:right center}
+.in-cube-r{animation:inCubeR .65s ease both;transform-origin:right center}.out-cube-r{animation:outCubeR .65s ease both;transform-origin:left center}
+@keyframes inCube{from{transform:translateX(100%) rotateY(70deg);opacity:.4}}@keyframes outCube{to{transform:translateX(-100%) rotateY(-70deg);opacity:.4}}
+@keyframes inCubeR{from{transform:translateX(-100%) rotateY(-70deg);opacity:.4}}@keyframes outCubeR{to{transform:translateX(100%) rotateY(70deg);opacity:.4}}
+
+/* overlays */
+#cover{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .4s}
+#cover.black{background:#000;opacity:1}#cover.white{background:#fff;opacity:1}
+#fxCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#spot{position:absolute;border-radius:50%;pointer-events:none;box-shadow:0 0 0 300vmax rgba(0,0,0,.8),inset 0 0 40px 10px rgba(0,0,0,.55);opacity:0;transition:opacity .25s, width .2s, height .2s}
+#spot.on{opacity:1}
+#lens{position:absolute;border-radius:50%;pointer-events:none;overflow:hidden;border:4px solid #fff;box-shadow:0 10px 40px rgba(0,0,0,.6);opacity:0;transition:opacity .2s;background:#000}
+#lens.on{opacity:1}#lens canvas{width:100%;height:100%;display:block}
+#cursor{position:absolute;width:38px;height:38px;pointer-events:none;opacity:0;transition:opacity .3s;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));z-index:5}
+#cursor.on{opacity:1}
+.ripple{position:absolute;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;border:4px solid #4f8cff;pointer-events:none;animation:ripple .6s ease-out forwards}
+@keyframes ripple{to{transform:scale(5);opacity:0}}
+#timer{position:absolute;right:2.2vw;bottom:2.2vw;padding:.5vw 1.3vw;border-radius:1.2vw;background:rgba(10,12,16,.78);backdrop-filter:blur(6px);font-weight:900;font-size:2.6vw;font-variant-numeric:tabular-nums;letter-spacing:.04em;color:#fff;transition:all .4s ease;pointer-events:none;box-shadow:0 6px 24px rgba(0,0,0,.4);overflow:hidden;z-index:6}
+#timer .bar{position:absolute;left:0;bottom:0;height:.35vw;background:var(--accent);transition:width .25s linear}
+#timer.big{right:50%;bottom:50%;transform:translate(50%,50%);font-size:13vw;padding:1vw 4vw;border-radius:3vw}
+#timer.big .bar{height:1vw}
+#timer.warn{color:#ffd166}#timer.warn .bar{background:#ffb020}
+#timer.danger{color:#ff6b6b;animation:pulse 1s infinite}#timer.danger .bar{background:#ff3b30}
+#timer.ended{color:#fff;background:rgba(255,59,48,.92);animation:pulse .6s infinite}
+@keyframes pulse{50%{opacity:.55}}
+#toast{position:absolute;left:50%;bottom:6vh;transform:translateX(-50%) translateY(20px);background:rgba(15,17,22,.88);padding:12px 22px;border-radius:999px;font-weight:700;font-size:18px;opacity:0;transition:all .3s;pointer-events:none;z-index:20;white-space:nowrap}
+#toast.on{opacity:1;transform:translateX(-50%)}
+#qrMini{position:absolute;top:18px;right:18px;background:#fff;color:#111;padding:14px;border-radius:16px;text-align:center;z-index:15;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+#qrMini .qr{width:180px;height:180px}
+#qrMini b{display:block;margin-top:8px;font-size:15px}
+#qrMini small{font-size:12px;color:#555}
+
+/* toolbar */
+#toolbar{position:absolute;left:50%;bottom:16px;transform:translate(-50%,200%);display:flex;gap:6px;background:rgba(20,22,28,.92);padding:8px;border-radius:16px;transition:transform .3s;z-index:30;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#toolbar.on{transform:translate(-50%,0)}
+#toolbar button{padding:9px 13px;border-radius:10px;font-size:14px;font-weight:500;white-space:nowrap}
+#toolbar button:hover{background:#2c313c}
+#connBadge{position:absolute;top:14px;left:14px;font-size:13px;padding:6px 12px;border-radius:999px;background:rgba(20,22,28,.8);opacity:0;transition:opacity .4s;z-index:12;pointer-events:none}
+#connBadge.on{opacity:1}
+
+/* start screen */
+#start{position:absolute;inset:0;z-index:40;background:radial-gradient(1200px 600px at 20% -10%,#1d2a4d 0%,transparent 60%),radial-gradient(900px 500px at 110% 110%,#2a1d4d 0%,transparent 60%),var(--bg);display:flex;align-items:center;justify-content:center;padding:28px;overflow:auto}
+.startWrap{width:min(1080px,100%);display:grid;grid-template-columns:1.25fr .9fr;gap:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:28px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.brand .logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:24px}
+h1{font-size:28px;font-weight:900;letter-spacing:-.02em}
+.sub{color:var(--muted);margin-bottom:22px;font-size:15px}
+.srcBtns{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.srcBtn{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:18px 14px;text-align:left;transition:all .2s}
+.srcBtn:hover{border-color:var(--accent);transform:translateY(-2px)}
+.srcBtn .ic{font-size:28px}.srcBtn b{display:block;margin:8px 0 4px;font-size:16px}.srcBtn span{font-size:12.5px;color:var(--muted);line-height:1.45;display:block}
+#drop{margin-top:14px;border:2px dashed var(--line);border-radius:16px;padding:18px;text-align:center;color:var(--muted);font-size:14px;transition:all .2s}
+#drop.over{border-color:var(--accent);background:rgba(79,140,255,.08);color:var(--text)}
+.feat{margin-top:20px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px 16px;font-size:13.5px;color:#c7cdd8}
+.keys{margin-top:16px;font-size:12.5px;color:var(--muted);line-height:1.8}
+kbd{background:#2a2f3a;border-radius:5px;padding:1px 6px;font-family:inherit;font-size:11.5px;color:#dde}
+.qrCard{text-align:center;display:flex;flex-direction:column;align-items:center}
+.qrBox{background:#fff;padding:16px;border-radius:18px;margin:14px 0 12px;width:252px;height:252px;display:grid;place-items:center}
+.qrBox .qr{width:220px;height:220px}
+.qr img,.qr canvas{width:100%!important;height:100%!important}
+.code{font-size:30px;font-weight:900;letter-spacing:.12em;font-variant-numeric:tabular-nums}
+.url{font-size:11.5px;color:var(--muted);word-break:break-all;margin-top:6px;max-width:300px}
+.status{margin-top:14px;font-size:14px;display:flex;align-items:center;gap:8px;justify-content:center}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--warn);display:inline-block;flex:none}
+.dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}.dot.bad{background:var(--bad)}
+.note{margin-top:14px;font-size:12px;color:#ffcf70;background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.25);padding:10px 12px;border-radius:12px;text-align:left;line-height:1.55}
+#loading{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.6);z-index:50;font-size:18px;font-weight:700}
+@media (max-width:860px){.startWrap{grid-template-columns:1fr}.srcBtns{grid-template-columns:1fr}}
+
+/* ================= REMOTE ================= */
+#remote{min-height:100%;padding:10px 12px calc(16px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;user-select:none;-webkit-user-select:none}
+.rTop{display:flex;align-items:center;gap:10px;padding:6px 2px 10px}
+.rTop .title{font-weight:900;font-size:16px;flex:1;display:flex;align-items:center;gap:8px}
+.pill{background:var(--panel2);border-radius:999px;padding:5px 11px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+#rTimerMini.run{color:#7cf0a8}#rTimerMini.end{color:#ff6b6b}
+.padWrap{display:flex;justify-content:center}
+#pad{position:relative;border-radius:14px;overflow:hidden;background:#1a1d24 center/100% 100% no-repeat;border:2px solid var(--line);touch-action:none;width:100%}
+#pad.active{border-color:var(--accent)}
+#padCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#padHint{position:absolute;left:0;right:0;bottom:0;padding:6px 10px;font-size:12px;background:linear-gradient(transparent,rgba(0,0,0,.75));color:#dfe4ee;pointer-events:none;text-align:center}
+#padDot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:rgba(79,140,255,.45);border:2px solid #fff;pointer-events:none;opacity:0}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:10px 0 6px}
+.modes::-webkit-scrollbar{display:none}
+.mode{padding:9px 4px;border-radius:12px;background:var(--panel2);font-size:13.5px;font-weight:700;border:1px solid transparent}
+.mode.on{background:rgba(79,140,255,.18);border-color:var(--accent);color:#cfe0ff}
+.ctx{display:flex;align-items:center;gap:8px;min-height:40px;padding:2px 0 4px;flex-wrap:wrap}
+.ctx label{font-size:12.5px;color:var(--muted)}
+.ctx input[type=range]{flex:1;min-width:120px;accent-color:var(--accent)}
+.sw{width:30px;height:30px;border-radius:50%;border:3px solid transparent}
+.sw.on{border-color:#fff}
+.sbtn{padding:7px 12px;border-radius:10px;background:var(--panel2);font-size:13px;font-weight:700}
+.sbtn.on{background:var(--accent);color:#fff}
+.nav{display:grid;grid-template-columns:1fr 1.6fr;gap:10px;margin:6px 0 12px}
+.nav button{height:84px;border-radius:18px;font-size:22px;font-weight:900;background:var(--panel2);border:1px solid var(--line);transition:transform .08s}
+.nav button:active{transform:scale(.96);background:#2a3040}
+.nav .next{background:linear-gradient(135deg,var(--accent),var(--accent2));border:0;color:#fff}
+.nav.disabled button{opacity:.35}
+.sec{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px}
+.sec h3{font-size:14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;color:#cdd3de}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tile{background:var(--panel2);border-radius:14px;padding:10px 4px;font-size:12px;font-weight:700;text-align:center;border:1px solid transparent;line-height:1.3}
+.tile .e{display:block;font-size:22px;margin-bottom:3px}
+.tile.on{border-color:var(--accent);background:rgba(79,140,255,.16)}
+.tile:active{transform:scale(.96)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:7px 11px;border-radius:999px;background:var(--panel2);font-size:12.5px;font-weight:700;border:1px solid transparent}
+.chip.on{border-color:var(--accent2);background:rgba(124,92,255,.2)}
+.tDisp{font-size:46px;font-weight:900;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:.03em;margin:2px 0 10px}
+.tDisp.end{color:#ff6b6b}
+.tRow{display:flex;gap:6px;margin-bottom:8px}
+.tRow button{flex:1;padding:11px 0;border-radius:12px;background:var(--panel2);font-weight:700;font-size:14px}
+.tRow .main{background:var(--ok);color:#06210f}
+.tRow .main.pause{background:var(--warn);color:#2a1a00}
+.previews{display:flex;gap:10px;align-items:flex-start}
+.previews figure{flex:1}
+.previews img{width:100%;border-radius:10px;background:#222;display:block;min-height:40px}
+.previews figcaption{font-size:11.5px;color:var(--muted);margin-top:4px}
+.jump{display:flex;gap:6px;margin-top:10px}
+.jump input{width:70px;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);text-align:center}
+#rConnect{position:fixed;inset:0;background:var(--bg);z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;gap:14px}
+#rConnect input{font-size:28px;letter-spacing:.15em;text-align:center;width:220px;padding:12px;border-radius:14px;border:1px solid var(--line);background:var(--panel2);color:var(--text);text-transform:lowercase}
+#rConnect .go{padding:13px 28px;border-radius:14px;background:var(--accent);color:#fff;font-weight:900;font-size:16px}
+#rMsg{color:var(--muted);font-size:14px;line-height:1.6;max-width:320px}
+.banner{background:rgba(255,77,79,.12);border:1px solid rgba(255,77,79,.35);color:#ffb3b3;padding:9px 12px;border-radius:12px;font-size:13px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.banner button{background:var(--bad);color:#fff;padding:6px 12px;border-radius:9px;font-weight:700;font-size:12.5px}
+</style>
+</head>
+<body>
+
+<!-- ======================= HOST (PC) ======================= -->
+<div id="host" class="hidden">
+  <div id="stage">
+    <div id="frame">
+      <div id="zoomLayer">
+        <div id="slideBox"></div>
+        <canvas id="drawCanvas"></canvas>
+      </div>
+    </div>
+    <div id="cover"></div>
+    <div id="spot"></div>
+    <div id="lens"><canvas></canvas></div>
+    <canvas id="fxCanvas"></canvas>
+    <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 11-6.6 1.2L16 21.5l-3 1.4-3.6-7.2L4 20z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+    <div id="timer" class="hidden"><span id="timerText">05:00</span><div class="bar" id="timerBar"></div></div>
+    <div id="connBadge"></div>
+    <div id="qrMini" class="hidden"><div class="qr" id="qrMiniBox"></div><b id="qrMiniCode"></b><small>휴대폰 카메라로 찍으세요</small></div>
+    <div id="toast"></div>
+    <div id="toolbar">
+      <button data-act="open">📂 파일 열기</button>
+      <button data-act="share">🖥 화면 공유</button>
+      <button data-act="board">🟩 판서 칠판</button>
+      <button data-act="qr">📱 QR</button>
+      <button data-act="full">⛶ 전체화면</button>
+      <button data-act="home">🏠 처음</button>
+    </div>
+  </div>
+
+  <div id="start">
+    <div class="startWrap">
+      <div class="card">
+        <div class="brand"><div class="logo">📱</div><h1>폰 프리젠터</h1></div>
+        <p class="sub">휴대폰으로 QR을 찍으면 리모컨이 됩니다. 발표 자료를 고르세요.</p>
+        <div class="srcBtns">
+          <button class="srcBtn" data-act="open"><div class="ic">📄</div><b>PDF · 이미지 열기</b><span>PPT는 ‘PDF로 저장’해서 여세요. 페이지 넘기기·전환 효과 모두 가능</span></button>
+          <button class="srcBtn" data-act="share"><div class="ic">🖥</div><b>화면 공유</b><span>다른 창(영상·웹 등)을 가져와 블러·확대·포인터 효과를 입힙니다</span></button>
+          <button class="srcBtn" data-act="board"><div class="ic">🟩</div><b>판서 칠판</b><span>빈 칠판에 휴대폰으로 판서하고 타이머를 띄웁니다</span></button>
+        </div>
+        <div id="drop">여기에 PDF나 이미지 파일을 끌어다 놓아도 됩니다 (이미지는 여러 장 → 파일 이름 순서)</div>
+        <div class="feat">
+          <div>◀ ▶ 이전·다음 + 전환 효과 5종</div><div>👆 마우스 포인터 이동·클릭</div>
+          <div>🔴 레이저 포인터 (잔상)</div><div>🔦 스포트라이트</div>
+          <div>🔍 돋보기 · ➕ 화면 확대</div><div>🌫 화면 블러 (세기 조절)</div>
+          <div>✏️ 휴대폰으로 판서</div><div>⏱ 타이머 · 스톱워치 · 알람</div>
+          <div>⬛ 블랙 · ⬜ 화이트 화면</div><div>🎉 폭죽 · 👏 박수 효과</div>
+        </div>
+        <div class="keys">PC 키보드: <kbd>←</kbd><kbd>→</kbd> 이전/다음 · <kbd>B</kbd> 블러 · <kbd>K</kbd> 블랙 · <kbd>W</kbd> 화이트 · <kbd>T</kbd> 타이머 시작/정지 · <kbd>C</kbd> 판서 지우기 · <kbd>Q</kbd> QR · <kbd>F</kbd> 전체화면 · <kbd>Esc</kbd> 효과 모두 해제</div>
+      </div>
+      <div class="card qrCard">
+        <b style="font-size:17px">📱 휴대폰으로 연결</b>
+        <div class="qrBox"><div class="qr" id="qrBox"></div></div>
+        <div style="font-size:12.5px;color:var(--muted)">접속 코드</div>
+        <div class="code" id="codeText">······</div>
+        <div class="url" id="urlText"></div>
+        <div class="status"><span class="dot" id="hostDot"></span><span id="hostStatus">연결 서버 접속 중…</span></div>
+        <div class="note hidden" id="fileNote">⚠️ 지금은 PC의 파일(file://)로 열려 있어 휴대폰이 이 주소로 접속할 수 없습니다. GitHub Pages 등 웹에 올린 주소로 열어 주세요.</div>
+        <div class="note" style="color:#bfd2ff;background:rgba(79,140,255,.08);border-color:rgba(79,140,255,.25)">💡 휴대폰과 PC가 같은 와이파이가 아니어도 됩니다. 연결이 안 되면 학교 방화벽 때문일 수 있으니 휴대폰 데이터(LTE/5G)로 바꿔 보세요.</div>
+      </div>
+    </div>
+  </div>
+  <div id="loading" class="hidden">불러오는 중…</div>
+  <input type="file" id="fileInput" accept="application/pdf,.pdf,image/*,.ppt,.pptx" multiple hidden>
+</div>
+
+<!-- ======================= REMOTE (PHONE) ======================= -->
+<div id="remote" class="hidden">
+  <div id="rConnect" class="hidden">
+    <div style="font-size:44px">📱</div>
+    <b style="font-size:20px">폰 프리젠터 리모컨</b>
+    <div id="rMsg">PC 화면에 보이는 접속 코드 6자리를 입력하세요.</div>
+    <input id="codeInput" maxlength="6" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="abc123">
+    <button class="go" id="codeGo">연결하기</button>
+  </div>
+
+  <div class="rTop">
+    <div class="title"><span class="dot" id="rDot"></span><span id="rStatus">연결 중…</span></div>
+    <span class="pill" id="rPage">– / –</span>
+    <span class="pill" id="rTimerMini">⏱ --:--</span>
+  </div>
+  <div id="rBanner" class="banner hidden"><span id="rBannerText">연결이 끊어졌습니다</span><button id="rRetry">다시 연결</button></div>
+
+  <div class="padWrap"><div id="pad"><canvas id="padCanvas"></canvas><div id="padDot"></div><div id="padHint"></div></div></div>
+
+  <div class="modes" id="modes">
+    <button class="mode on" data-m="pointer">👆 포인터</button>
+    <button class="mode" data-m="laser">🔴 레이저</button>
+    <button class="mode" data-m="spot">🔦 스포트</button>
+    <button class="mode" data-m="lens">🔍 돋보기</button>
+    <button class="mode" data-m="zoom">➕ 확대</button>
+    <button class="mode" data-m="pen">✏️ 판서</button>
+  </div>
+  <div class="ctx" id="ctx"></div>
+
+  <div class="nav" id="nav">
+    <button id="bPrev">◀ 이전</button>
+    <button id="bNext" class="next">다음 ▶</button>
+  </div>
+
+  <div class="sec">
+    <h3>✨ 화면 효과 <button class="sbtn" id="bResetFx">모두 해제</button></h3>
+    <div class="grid">
+      <button class="tile" id="tBlur"><span class="e">🌫</span>블러</button>
+      <button class="tile" id="tBlack"><span class="e">⬛</span>블랙 화면</button>
+      <button class="tile" id="tWhite"><span class="e">⬜</span>화이트 화면</button>
+      <button class="tile" id="tClear"><span class="e">🧽</span>판서 지우기</button>
+      <button class="tile" data-fx="confetti"><span class="e">🎉</span>폭죽</button>
+      <button class="tile" data-fx="clap"><span class="e">👏</span>박수</button>
+      <button class="tile" data-fx="good"><span class="e">👍</span>최고</button>
+      <button class="tile" data-fx="heart"><span class="e">❤️</span>하트</button>
+    </div>
+    <div class="ctx" style="margin-top:8px"><label>블러 세기</label><input type="range" id="blurRange" min="2" max="40" value="14"></div>
+  </div>
+
+  <div class="sec">
+    <h3>⏱ 타이머
+      <span class="chips"><button class="chip on" data-tk="down">타이머</button><button class="chip" data-tk="up">스톱워치</button></span>
+    </h3>
+    <div class="tDisp" id="tDisp">05:00</div>
+    <div class="tRow" id="tPresets">
+      <button data-ms="60000">1분</button><button data-ms="180000">3분</button><button data-ms="300000">5분</button><button data-ms="600000">10분</button><button data-ms="900000">15분</button>
+    </div>
+    <div class="tRow">
+      <button data-add="-60000">−1분</button><button data-add="-10000">−10초</button><button data-add="10000">+10초</button><button data-add="60000">+1분</button>
+    </div>
+    <div class="tRow">
+      <button class="main" id="tToggle">▶ 시작</button><button id="tReset">↺ 초기화</button>
+    </div>
+    <div class="chips">
+      <button class="chip on" id="tShow">화면에 표시</button>
+      <button class="chip" id="tBig">크게 표시</button>
+    </div>
+  </div>
+
+  <div class="sec" id="slideSec">
+    <h3>🖼 슬라이드 · 전환 효과</h3>
+    <div class="chips" id="trans" style="margin-bottom:12px">
+      <button class="chip" data-tr="none">없음</button><button class="chip" data-tr="fade">페이드</button><button class="chip on" data-tr="slide">슬라이드</button><button class="chip" data-tr="zoom">줌</button><button class="chip" data-tr="flip">플립</button><button class="chip" data-tr="cube">큐브</button>
+    </div>
+    <div class="previews">
+      <figure><img id="pvCur" alt=""><figcaption>현재</figcaption></figure>
+      <figure><img id="pvNext" alt=""><figcaption>다음</figcaption></figure>
+    </div>
+    <div class="jump"><button class="sbtn" id="bFirst">⏮ 처음</button><input id="jumpInput" type="number" inputmode="numeric" min="1" placeholder="쪽"><button class="sbtn" id="bJump">이동</button><button class="sbtn" id="bLast">끝 ⏭</button></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const lsGet = k => { try { return localStorage.getItem(k) } catch(e) { return null } };
+const lsSet = (k,v) => { try { localStorage.setItem(k,v) } catch(e) {} };
+function randId(n){ const a='abcdefghjkmnpqrstuvwxyz23456789'; let s=''; const r=new Uint32Array(n); crypto.getRandomValues(r); for(const x of r) s+=a[x%a.length]; return s; }
+function fmt(ms){ const t=Math.ceil(ms/1000), h=Math.floor(t/3600), m=Math.floor(t%3600/60), s=t%60; const p=n=>String(n).padStart(2,'0'); return h? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`; }
+function fmtUp(ms){ const t=Math.floor(ms/1000), h=Math.floor(t/3600), m=Math.floor(t%3600/60), s=t%60; const p=n=>String(n).padStart(2,'0'); return h? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`; }
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load fail '+src)); document.head.appendChild(s); }); }
+const PEER_PREFIX = 'phonepresenter-';
+
+const h = location.hash;
+const ROLE = (h.startsWith('#r=') || h === '#remote') ? 'remote' : 'host';
+if (typeof Peer === 'undefined') {
+  document.body.innerHTML = '<div style="padding:40px;text-align:center;line-height:1.7">연결 라이브러리를 불러오지 못했습니다.<br>인터넷 연결을 확인하고 새로고침해 주세요.</div>';
+} else if (ROLE === 'host') hostMain(); else remoteMain();
+
+/* =====================================================================
+   HOST (PC)
+   ===================================================================== */
+function hostMain(){
+  $('#host').classList.remove('hidden');
+  const stage=$('#stage'), frame=$('#frame'), zoomLayer=$('#zoomLayer'), slideBox=$('#slideBox');
+  const drawCanvas=$('#drawCanvas'), dctx=drawCanvas.getContext('2d');
+  const fxCanvas=$('#fxCanvas'), fctx=fxCanvas.getContext('2d');
+  const spot=$('#spot'), lens=$('#lens'), lensCanvas=lens.querySelector('canvas'), lctx=lensCanvas.getContext('2d');
+  const cursor=$('#cursor'), cover=$('#cover'), timerEl=$('#timer');
+
+  const S = {
+    peer:null, id:null, conns:new Set(),
+    mode:'none', slides:[], aspects:[], idx:0, pdf:null, stream:null, video:null,
+    cache:new Map(), thumbs:new Map(), renderToken:0,
+    fx:{ blurOn:false, blur:14, black:false, white:false, transition:'slide' },
+    zoom:{ on:false, s:2.2, x:.5, y:.5 },
+    spotR:.13, lensR:.12, lensZ:2.5,
+    pen:{ color:'#ff3b30', w:5 }, strokes:[], curStroke:null,
+    laser:[], laserOn:false, particles:[], lensOn:false, lensPt:null,
+    rect:{left:0,top:0,width:1,height:1},
+    timer:{ kind:'down', dur:300000, base:0, start:0, running:false, show:false, big:false, ended:false },
+    lastTimerSec:-1, audio:null
+  };
+
+  /* ---------- connection ---------- */
+  function setHostStatus(txt, cls){ $('#hostStatus').textContent=txt; $('#hostDot').className='dot '+(cls||''); }
+  function remoteURL(){ return location.href.split('#')[0] + '#r=' + S.id; }
+  function startPeer(id){
+    S.id=id;
+    $('#codeText').textContent=id;
+    const peer=new Peer(PEER_PREFIX+id, {debug:1});
+    S.peer=peer;
+    peer.on('open', ()=>{ setHostStatus(S.conns.size? `휴대폰 ${S.conns.size}대 연결됨`:'휴대폰 연결 대기 중', S.conns.size?'ok':''); makeQR(); });
+    peer.on('error', e=>{
+      if (e.type==='unavailable-id') { peer.destroy(); const nid=randId(6); lsSet('pp-host-id',nid); startPeer(nid); return; }
+      if (e.type==='peer-unavailable') return;
+      setHostStatus('연결 서버 오류 – 재시도 중… ('+e.type+')','bad');
+      setTimeout(()=>{ if(!peer.destroyed && peer.disconnected) peer.reconnect(); }, 3000);
+    });
+    peer.on('disconnected', ()=>{ setHostStatus('연결 서버와 끊김 – 재접속 중…','bad'); setTimeout(()=>{ if(!peer.destroyed && peer.disconnected) peer.reconnect(); }, 1500); });
+    peer.on('connection', c=>{
+      c.on('open', ()=>{ S.conns.add(c); updateConn(); toast('📱 휴대폰이 연결되었습니다'); sendState(); sendThumbs(); });
+      c.on('data', d=>{ try{ handle(d); }catch(err){ console.error(err); } });
+      c.on('close', ()=>{ S.conns.delete(c); updateConn(); });
+      c.on('error', ()=>{ S.conns.delete(c); updateConn(); });
+    });
+  }
+  function updateConn(){
+    const n=S.conns.size;
+    setHostStatus(n? `휴대폰 ${n}대 연결됨`:'휴대폰 연결 대기 중', n?'ok':'');
+    const b=$('#connBadge'); b.textContent = n? `📱 리모컨 ${n}대 연결됨` : '📱 리모컨 연결 끊김';
+    b.classList.add('on'); clearTimeout(updateConn.t); updateConn.t=setTimeout(()=>b.classList.remove('on'), 3000);
+    if(n) $('#qrMini').classList.add('hidden');
+  }
+  async function makeQR(){
+    const url=remoteURL();
+    $('#urlText').textContent=url; $('#qrMiniCode').textContent='코드 '+S.id;
+    try{
+      if(typeof QRCode==='undefined') await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+      for(const id of ['qrBox','qrMiniBox']){ const el=document.getElementById(id); el.innerHTML=''; new QRCode(el,{text:url,width:440,height:440,correctLevel:QRCode.CorrectLevel.M}); }
+    }catch(e){ $('#qrBox').textContent='QR 생성 실패 – 아래 주소/코드를 사용하세요'; }
+  }
+  function send(o){ for(const c of S.conns){ try{ if(c.open) c.send(o); }catch(e){} } }
+  function timerSnap(){ const t=S.timer; return { kind:t.kind, ms:timerValue(), dur:t.dur, running:t.running, show:t.show, big:t.big, ended:t.ended }; }
+  function sendState(){
+    send({ t:'state', mode:S.mode, idx:S.idx, total:S.slides.length, aspect:curAspect(),
+      canNav:(S.mode==='slides'), fx:S.fx, zoomOn:S.zoom.on, zoomS:S.zoom.s, spotR:S.spotR, lensZ:S.lensZ, pen:S.pen, timer:timerSnap() });
+  }
+
+  /* ---------- layout ---------- */
+  function curAspect(){
+    if(S.mode==='slides') return S.aspects[S.idx] || 16/9;
+    if(S.mode==='share' && S.video && S.video.videoWidth) return S.video.videoWidth/S.video.videoHeight;
+    return 16/9;
+  }
+  function layout(){
+    const W=innerWidth, H=innerHeight, a=curAspect();
+    let w=W, hh=W/a; if(hh>H){ hh=H; w=H*a; }
+    const r={ left:(W-w)/2, top:(H-hh)/2, width:w, height:hh };
+    S.rect=r;
+    Object.assign(frame.style,{ left:r.left+'px', top:r.top+'px', width:r.width+'px', height:r.height+'px' });
+    const dpr=devicePixelRatio||1;
+    drawCanvas.width=Math.round(r.width*dpr); drawCanvas.height=Math.round(r.height*dpr);
+    fxCanvas.width=Math.round(W*dpr); fxCanvas.height=Math.round(H*dpr);
+    redrawStrokes(); applyZoom();
+  }
+  addEventListener('resize', ()=>{ const prev=S.rect.width; layout(); if(S.mode==='slides' && Math.abs(prev-S.rect.width)>40){ S.cache.clear(); showSlide(S.idx,0,true); } });
+  function toScreen(x,y){ return { x:S.rect.left+x*S.rect.width, y:S.rect.top+y*S.rect.height }; }
+  function toContent(x,y){ if(!S.zoom.on) return {x,y}; const z=S.zoom; return { x:z.x+(x-z.x)/z.s, y:z.y+(y-z.y)/z.s }; }
+
+  /* ---------- sources ---------- */
+  function enterStage(){ $('#start').classList.add('hidden'); }
+  function goHome(){ stopShare(); $('#start').classList.remove('hidden'); S.mode='none'; slideBox.innerHTML=''; sendState(); }
+  async function openFiles(list){
+    const files=[...list]; if(!files.length) return;
+    if(files.some(f=>/\.pptx?$/i.test(f.name))){ toast('PPT 파일은 PowerPoint에서 [다른 이름으로 저장 → PDF] 후 열어 주세요', 4500); return; }
+    const pdfFile=files.find(f=>f.type==='application/pdf' || /\.pdf$/i.test(f.name));
+    const imgs=files.filter(f=>f.type.startsWith('image/')).sort((a,b)=>a.name.localeCompare(b.name,'ko',{numeric:true}));
+    if(!pdfFile && !imgs.length){ toast('PDF 또는 이미지 파일을 선택해 주세요'); return; }
+    $('#loading').classList.remove('hidden');
+    try{
+      stopShare(); S.cache.clear(); S.thumbs.clear(); S.pdf=null;
+      if(pdfFile){
+        if(typeof pdfjsLib==='undefined'){
+          await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+          pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+        const buf=await pdfFile.arrayBuffer();
+        S.pdf=await pdfjsLib.getDocument({ data:buf, cMapUrl:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/', cMapPacked:true, standardFontDataUrl:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/' }).promise;
+        const p1=await S.pdf.getPage(1), v=p1.getViewport({scale:1});
+        S.slides=Array.from({length:S.pdf.numPages},(_,k)=>({kind:'pdf',no:k+1}));
+        S.aspects=S.slides.map(()=>v.width/v.height);
+      } else {
+        S.slides=[]; S.aspects=[];
+        for(const f of imgs){ const img=new Image(); img.src=URL.createObjectURL(f); await img.decode(); S.slides.push({kind:'img',img}); S.aspects.push(img.naturalWidth/img.naturalHeight); }
+      }
+      S.mode='slides'; S.idx=0; slideBox.innerHTML='';
+      enterStage(); layout(); await showSlide(0,0,true);
+      toast(`📄 ${S.slides.length}쪽을 불러왔습니다`);
+    }catch(e){ console.error(e); toast('파일을 여는 중 오류가 발생했습니다'); }
+    finally{ $('#loading').classList.add('hidden'); }
+  }
+  async function renderSlide(i){
+    const dpr=devicePixelRatio||1, tw=Math.round(S.rect.width*dpr);
+    const key=i+'@'+tw; if(S.cache.has(key)) return S.cache.get(key);
+    const sl=S.slides[i], c=document.createElement('canvas'), x=c.getContext('2d');
+    if(sl.kind==='pdf'){
+      const page=await S.pdf.getPage(sl.no), v1=page.getViewport({scale:1});
+      S.aspects[i]=v1.width/v1.height;
+      const vp=page.getViewport({scale:tw/v1.width});
+      c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+      x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height);
+      await page.render({canvasContext:x, viewport:vp}).promise;
+    } else {
+      c.width=tw; c.height=Math.round(tw/S.aspects[i]);
+      x.imageSmoothingQuality='high'; x.drawImage(sl.img,0,0,c.width,c.height);
+    }
+    if(S.cache.size>14) S.cache.delete(S.cache.keys().next().value);
+    S.cache.set(key,c); return c;
+  }
+  async function showSlide(i, dir, force){
+    if(S.mode!=='slides') return;
+    i=clamp(i,0,S.slides.length-1);
+    if(i===S.idx && !force && slideBox.querySelector('.cur')) return;
+    const token=++S.renderToken;
+    const src=await renderSlide(i);
+    if(token!==S.renderToken) return;
+    const changed = i!==S.idx || force;
+    S.idx=i; layout();
+    const c=document.createElement('canvas'); c.width=src.width; c.height=src.height; c.getContext('2d').drawImage(src,0,0);
+    c.className='slide cur';
+    const old=[...slideBox.querySelectorAll('.slide')];
+    const fx=S.fx.transition;
+    if(old.length && fx!=='none' && dir!==0){
+      const suf=dir<0?'-r':'';
+      c.classList.add('in-'+fx+suf);
+      old.forEach(o=>{ o.classList.remove('cur'); o.className='slide out-'+fx+suf; setTimeout(()=>o.remove(),750); });
+      c.addEventListener('animationend', ()=>c.className='slide cur', {once:true});
+    } else old.forEach(o=>o.remove());
+    slideBox.appendChild(c);
+    if(changed){ S.strokes=[]; redrawStrokes(); if(S.zoom.on){ S.zoom.on=false; applyZoom(); } }
+    if(dir!==0) toast(`${i+1} / ${S.slides.length}`, 900);
+    sendState(); sendThumbs();
+    if(i+1<S.slides.length) renderSlide(i+1).catch(()=>{});
+  }
+  async function thumb(i){
+    if(i<0 || i>=S.slides.length) return null;
+    if(S.thumbs.has(i)) return S.thumbs.get(i);
+    const sl=S.slides[i], W=420, c=document.createElement('canvas'), x=c.getContext('2d');
+    if(sl.kind==='pdf'){ const page=await S.pdf.getPage(sl.no), v1=page.getViewport({scale:1}), vp=page.getViewport({scale:W/v1.width}); c.width=Math.round(vp.width); c.height=Math.round(vp.height); x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height); await page.render({canvasContext:x,viewport:vp}).promise; }
+    else { c.width=W; c.height=Math.round(W/S.aspects[i]); x.drawImage(sl.img,0,0,c.width,c.height); }
+    const d=c.toDataURL('image/jpeg',.62); S.thumbs.set(i,d); return d;
+  }
+  async function sendThumbs(){
+    if(!S.conns.size) return;
+    if(S.mode==='slides'){ const i=S.idx; const [cur,next]=await Promise.all([thumb(i),thumb(i+1)]); if(i===S.idx) send({t:'thumb',cur,next}); }
+    else if(S.mode==='share') shareThumb();
+    else send({t:'thumb',cur:null,next:null});
+  }
+  function shareThumb(){
+    const v=S.video; if(!v || !v.videoWidth || !S.conns.size) return;
+    const c=document.createElement('canvas'); c.width=380; c.height=Math.round(380*v.videoHeight/v.videoWidth);
+    c.getContext('2d').drawImage(v,0,0,c.width,c.height); send({t:'thumb',cur:c.toDataURL('image/jpeg',.55),next:null});
+  }
+  async function startShare(){
+    try{
+      const st=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:30},audio:false});
+      stopShare(); S.stream=st;
+      const v=document.createElement('video'); v.className='slide cur'; v.muted=true; v.playsInline=true; v.srcObject=st; S.video=v;
+      slideBox.innerHTML=''; slideBox.appendChild(v); await v.play();
+      S.mode='share'; S.strokes=[]; enterStage(); layout();
+      v.addEventListener('resize', layout);
+      st.getVideoTracks()[0].addEventListener('ended', ()=>{ if(S.stream===st){ toast('화면 공유가 끝났습니다'); goHome(); } });
+      S.shareTimer=setInterval(shareThumb, 2000);
+      sendState(); setTimeout(shareThumb,500);
+      toast('🖥 화면 공유 중 – 이 창을 프로젝터 화면에 띄우세요', 3500);
+    }catch(e){ toast('화면 공유가 취소되었습니다'); }
+  }
+  function stopShare(){ clearInterval(S.shareTimer); if(S.stream){ S.stream.getTracks().forEach(t=>t.stop()); S.stream=null; } S.video=null; }
+  function startBoard(){
+    stopShare(); S.mode='board'; slideBox.innerHTML='<div class="slide board cur">✏️ 휴대폰의 ‘판서’ 모드로 그려 보세요</div>';
+    S.strokes=[]; enterStage(); layout(); sendState(); sendThumbs();
+  }
+
+  /* ---------- pen ---------- */
+  function redrawStrokes(){
+    const W=drawCanvas.width, H=drawCanvas.height; dctx.clearRect(0,0,W,H);
+    for(const s of S.strokes) drawStroke(s);
+  }
+  function drawStroke(s, from){
+    const W=drawCanvas.width, H=drawCanvas.height, pts=s.pts; if(!pts.length) return;
+    dctx.strokeStyle=s.color; dctx.lineWidth=s.w*W/1000; dctx.lineCap='round'; dctx.lineJoin='round';
+    dctx.beginPath(); const st=Math.max(0,(from||0)-1);
+    dctx.moveTo(pts[st][0]*W, pts[st][1]*H);
+    if(pts.length===1) dctx.lineTo(pts[0][0]*W+.1, pts[0][1]*H);
+    for(let k=st+1;k<pts.length;k++) dctx.lineTo(pts[k][0]*W, pts[k][1]*H);
+    dctx.stroke();
+  }
+
+  /* ---------- zoom / blur / cover ---------- */
+  function applyZoom(){
+    const z=S.zoom;
+    zoomLayer.style.transformOrigin=`${z.x*100}% ${z.y*100}%`;
+    zoomLayer.style.transform=z.on?`scale(${z.s})`:'none';
+  }
+  function applyFx(){
+    zoomLayer.style.filter=S.fx.blurOn?`blur(${S.fx.blur}px)`:'none';
+    cover.className=S.fx.black?'black':S.fx.white?'white':'';
+  }
+  function resetFx(){
+    S.fx.blurOn=false; S.fx.black=false; S.fx.white=false; S.zoom.on=false;
+    spot.classList.remove('on'); lens.classList.remove('on'); S.lensOn=false; S.laserOn=false;
+    applyFx(); applyZoom(); sendState();
+  }
+
+  /* ---------- pointer effects ---------- */
+  let cursorTimer;
+  function showCursor(p){ cursor.style.left=(p.x-6)+'px'; cursor.style.top=(p.y-3)+'px'; cursor.classList.add('on'); clearTimeout(cursorTimer); cursorTimer=setTimeout(()=>cursor.classList.remove('on'),4000); }
+  function doClick(x,y){
+    const p=toScreen(x,y); showCursor(p);
+    const r=document.createElement('div'); r.className='ripple'; r.style.left=p.x+'px'; r.style.top=p.y+'px'; stage.appendChild(r); setTimeout(()=>r.remove(),700);
+    const el=document.elementFromPoint(p.x,p.y);
+    const btn=el && el.closest && el.closest('button,a,[data-act]');
+    if(btn) btn.click();
+  }
+  function setSpot(p){ const r=S.spotR*S.rect.width; Object.assign(spot.style,{ width:2*r+'px', height:2*r+'px', left:(p.x-r)+'px', top:(p.y-r)+'px' }); spot.classList.add('on'); }
+  function lensSource(){ if(S.mode==='share') return S.video; return slideBox.querySelector('canvas.slide.cur') || null; }
+  function drawLens(){
+    const pt=S.lensPt; if(!pt) return;
+    const D=2*S.lensR*S.rect.width, dpr=devicePixelRatio||1;
+    lensCanvas.width=Math.round(D*dpr); lensCanvas.height=Math.round(D*dpr);
+    Object.assign(lens.style,{ width:D+'px', height:D+'px', left:(S.rect.left+pt.x*S.rect.width-D/2)+'px', top:(S.rect.top+pt.y*S.rect.height-D/2)+'px' });
+    const bg=S.mode==='board'?'#14301f':'#fff'; lctx.fillStyle=bg; lctx.fillRect(0,0,lensCanvas.width,lensCanvas.height);
+    const fracW=(D/S.lensZ)/S.rect.width, fracH=(D/S.lensZ)/S.rect.height;
+    const draw=(src,sw,sh)=>{ if(!src||!sw) return; lctx.drawImage(src,(pt.x-fracW/2)*sw,(pt.y-fracH/2)*sh,fracW*sw,fracH*sh,0,0,lensCanvas.width,lensCanvas.height); };
+    const src=lensSource();
+    if(src){ if(src.tagName==='VIDEO') draw(src,src.videoWidth,src.videoHeight); else draw(src,src.width,src.height); }
+    draw(drawCanvas,drawCanvas.width,drawCanvas.height);
+  }
+  function onPt(d){
+    const p=toScreen(d.x,d.y), up=d.d==='up';
+    switch(d.m){
+      case 'pointer': showCursor(p); break;
+      case 'laser':
+        if(up){ S.laserOn=false; } else { S.laserOn=true; S.laser.push({x:p.x,y:p.y,t:performance.now()}); kick(); }
+        break;
+      case 'spot': up? spot.classList.remove('on') : setSpot(p); break;
+      case 'lens':
+        if(up){ lens.classList.remove('on'); S.lensOn=false; } else { S.lensPt={x:d.x,y:d.y}; S.lensOn=true; drawLens(); lens.classList.add('on'); kick(); }
+        break;
+      case 'zoom':
+        if(!up){ S.zoom.on=true; S.zoom.x=d.x; S.zoom.y=d.y; applyZoom(); sendState(); }
+        break;
+      case 'pen': {
+        const c=toContent(d.x,d.y);
+        if(d.d==='down'){ S.curStroke={color:S.pen.color,w:S.pen.w,pts:[[c.x,c.y]]}; S.strokes.push(S.curStroke); drawStroke(S.curStroke); }
+        else if(d.d==='move' && S.curStroke){ S.curStroke.pts.push([c.x,c.y]); drawStroke(S.curStroke, S.curStroke.pts.length-1); }
+        else if(up) S.curStroke=null;
+        break; }
+    }
+  }
+
+  /* ---------- fx canvas loop (laser + particles + video lens) ---------- */
+  let looping=false;
+  function kick(){ if(!looping){ looping=true; requestAnimationFrame(loop); } }
+  function loop(now){
+    const dpr=devicePixelRatio||1; fctx.setTransform(dpr,0,0,dpr,0,0); fctx.clearRect(0,0,innerWidth,innerHeight);
+    // laser
+    S.laser=S.laser.filter(q=>now-q.t<450);
+    if(S.laser.length>1){
+      for(let k=1;k<S.laser.length;k++){ const a=S.laser[k-1], b=S.laser[k], age=(now-b.t)/450;
+        fctx.strokeStyle=`rgba(255,40,40,${(1-age)*.8})`; fctx.lineWidth=10*(1-age)+2; fctx.lineCap='round';
+        fctx.beginPath(); fctx.moveTo(a.x,a.y); fctx.lineTo(b.x,b.y); fctx.stroke(); }
+    }
+    if(S.laserOn && S.laser.length){ const q=S.laser[S.laser.length-1];
+      const g=fctx.createRadialGradient(q.x,q.y,0,q.x,q.y,26); g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(.25,'rgba(255,40,40,1)'); g.addColorStop(1,'rgba(255,0,0,0)');
+      fctx.fillStyle=g; fctx.beginPath(); fctx.arc(q.x,q.y,26,0,7); fctx.fill();
+      if(now-q.t>40) S.laser.push({x:q.x,y:q.y,t:now});
+    }
+    // particles
+    const W=innerWidth, H=innerHeight;
+    S.particles=S.particles.filter(p=>p.life>0 && p.y<H+80);
+    for(const p of S.particles){
+      p.vy+=p.g; p.vx*=p.drag; p.vy*=p.drag; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; p.life--;
+      fctx.save(); fctx.translate(p.x,p.y); fctx.rotate(p.rot); fctx.globalAlpha=Math.min(1,p.life/40);
+      if(p.emoji){ fctx.font=`${p.size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`; fctx.textAlign='center'; fctx.textBaseline='middle'; fctx.fillText(p.emoji,0,0); }
+      else { fctx.fillStyle=p.color; fctx.fillRect(-p.size/2,-p.size/4,p.size,p.size/2); }
+      fctx.restore();
+    }
+    if(S.lensOn && S.mode==='share') drawLens();
+    if(S.laser.length || S.laserOn || S.particles.length || (S.lensOn && S.mode==='share')) requestAnimationFrame(loop);
+    else { fctx.clearRect(0,0,W,H); looping=false; }
+  }
+  function burst(kind){
+    const W=innerWidth, H=innerHeight;
+    if(kind==='confetti'){
+      const cols=['#ff3b30','#ffcc00','#34c759','#0a84ff','#bf5af2','#ff9f0a','#ffffff'];
+      for(const side of [0,1]) for(let k=0;k<110;k++){
+        const ang=(side? -Math.PI*0.62 : -Math.PI*0.38)+(Math.random()-.5)*.55, sp=14+Math.random()*16;
+        S.particles.push({x:side?W:0,y:H,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,g:.32,drag:.985,rot:Math.random()*6,vr:(Math.random()-.5)*.35,size:8+Math.random()*9,color:cols[k%cols.length],life:240+Math.random()*60});
+      }
+      beep([660,880,1320],.07);
+    } else {
+      const em={clap:'👏',good:'👍',heart:'❤️'}[kind]||'✨';
+      for(let k=0;k<38;k++) S.particles.push({emoji:em,x:Math.random()*W,y:H+40+Math.random()*200,vx:(Math.random()-.5)*1.5,vy:-(6+Math.random()*7),g:.04,drag:.995,rot:(Math.random()-.5)*.6,vr:(Math.random()-.5)*.03,size:40+Math.random()*44,life:200+Math.random()*60});
+    }
+    kick();
+  }
+
+  /* ---------- timer ---------- */
+  function timerValue(){ const t=S.timer; const el=t.base+(t.running?performance.now()-t.start:0); return t.kind==='down'? Math.max(0,t.dur-el) : el; }
+  function timerCmd(d){
+    const t=S.timer, now=performance.now();
+    const pause=()=>{ if(t.running){ t.base+=now-t.start; t.running=false; } };
+    switch(d.a){
+      case 'set': pause(); t.kind='down'; t.dur=d.ms; t.base=0; t.ended=false; t.show=true; break;
+      case 'add': if(t.kind==='down'){ t.dur=Math.max(0,t.dur+d.ms); if(timerValue()>0) t.ended=false; } break;
+      case 'toggle':
+        if(t.running) pause();
+        else { if(t.kind==='down' && timerValue()<=0){ t.base=0; t.ended=false; } t.start=now; t.running=true; t.show=true; ensureAudio(); }
+        break;
+      case 'reset': t.running=false; t.base=0; t.ended=false; break;
+      case 'kind': pause(); t.kind=d.v; t.base=0; t.ended=false; t.show=true; break;
+      case 'show': t.show=d.v; break;
+      case 'big': t.big=d.v; if(d.v) t.show=true; break;
+    }
+    S.lastTimerSec=-1; renderTimer(); sendState();
+  }
+  function renderTimer(){
+    const t=S.timer, v=timerValue();
+    if(t.kind==='down' && t.running && v<=0){ t.running=false; t.base=t.dur; t.ended=true; t.show=true; alarm(); send({t:'timer',...timerSnap()}); }
+    timerEl.classList.toggle('hidden', !t.show);
+    timerEl.classList.toggle('big', t.big);
+    const txt = t.ended ? '⏰ 시간 종료!' : (t.kind==='down'? fmt(v) : fmtUp(v));
+    $('#timerText').textContent = (t.kind==='up' && !t.ended ? '⏱ ' : '') + txt;
+    const frac = t.kind==='down' ? (t.dur? v/t.dur : 0) : (v%60000)/60000;
+    $('#timerBar').style.width=(frac*100)+'%';
+    const ended=t.ended, danger=t.kind==='down'&&!ended&&v<=10000&&t.running, warn=t.kind==='down'&&!ended&&!danger&&t.dur>=60000&&v<=Math.min(60000,t.dur*.2);
+    timerEl.classList.toggle('ended',ended); timerEl.classList.toggle('danger',danger); timerEl.classList.toggle('warn',warn);
+    const sec=Math.floor(v/1000);
+    if(sec!==S.lastTimerSec){ S.lastTimerSec=sec; send({t:'timer',...timerSnap()}); if(danger && sec>0 && sec<=5) beep([880],.05,.12); }
+  }
+  setInterval(renderTimer, 200);
+  function ensureAudio(){ try{ if(!S.audio) S.audio=new (window.AudioContext||window.webkitAudioContext)(); if(S.audio.state==='suspended') S.audio.resume(); }catch(e){} }
+  function beep(freqs,gap=.25,dur=.35){
+    if(!S.audio) return; const ac=S.audio, t0=ac.currentTime;
+    freqs.forEach((f,i)=>{ const o=ac.createOscillator(), g=ac.createGain(); o.type='sine'; o.frequency.value=f; o.connect(g); g.connect(ac.destination);
+      const st=t0+i*gap; g.gain.setValueAtTime(0,st); g.gain.linearRampToValueAtTime(.35,st+.02); g.gain.exponentialRampToValueAtTime(.001,st+dur); o.start(st); o.stop(st+dur+.05); });
+  }
+  function alarm(){ beep([988,784,988,784,988,1319],.28,.4); }
+  addEventListener('pointerdown', ensureAudio); addEventListener('keydown', ensureAudio);
+
+  /* ---------- message handler ---------- */
+  function handle(d){
+    switch(d.t){
+      case 'hello': sendState(); sendThumbs(); break;
+      case 'next': if(S.mode==='slides') showSlide(S.idx+1, 1); else toast('이 모드에서는 페이지 넘기기를 쓸 수 없습니다'); break;
+      case 'prev': if(S.mode==='slides') showSlide(S.idx-1,-1); break;
+      case 'goto': if(S.mode==='slides') showSlide(d.i, d.i>=S.idx?1:-1); break;
+      case 'pt': onPt(d); break;
+      case 'click': doClick(d.x,d.y); break;
+      case 'blur': if('on' in d) S.fx.blurOn=d.on; if('v' in d){ S.fx.blur=d.v; } applyFx(); sendState(); break;
+      case 'black': S.fx.black=!S.fx.black; S.fx.white=false; applyFx(); sendState(); break;
+      case 'white': S.fx.white=!S.fx.white; S.fx.black=false; applyFx(); sendState(); break;
+      case 'transition': S.fx.transition=d.v; sendState(); break;
+      case 'burst': burst(d.v); break;
+      case 'clear': S.strokes=[]; redrawStrokes(); break;
+      case 'undo': S.strokes.pop(); redrawStrokes(); break;
+      case 'pen': Object.assign(S.pen,d.v); sendState(); break;
+      case 'spotR': S.spotR=d.v; break;
+      case 'lensZ': S.lensZ=d.v; if(S.lensOn) drawLens(); break;
+      case 'zoomS': S.zoom.s=d.v; if(S.zoom.on) applyZoom(); break;
+      case 'zoomOff': S.zoom.on=false; applyZoom(); sendState(); break;
+      case 'timer': timerCmd(d); break;
+      case 'reset': resetFx(); break;
+    }
+  }
+
+  /* ---------- PC UI ---------- */
+  function toast(msg, ms=1800){ const t=$('#toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(toast.t); toast.t=setTimeout(()=>t.classList.remove('on'), ms); }
+  function toggleFull(){ try{ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }catch(e){} }
+  function act(a){
+    if(a==='open') $('#fileInput').click();
+    else if(a==='share') startShare();
+    else if(a==='board') startBoard();
+    else if(a==='qr') $('#qrMini').classList.toggle('hidden');
+    else if(a==='full') toggleFull();
+    else if(a==='home') goHome();
+  }
+  $$('[data-act]').forEach(b=>b.addEventListener('click', e=>{ e.stopPropagation(); act(b.dataset.act); }));
+  $('#fileInput').addEventListener('change', e=>{ openFiles(e.target.files); e.target.value=''; });
+  const drop=$('#drop');
+  ['dragenter','dragover'].forEach(ev=>addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave','drop'].forEach(ev=>addEventListener(ev, e=>{ e.preventDefault(); if(ev==='drop' || e.target===drop) drop.classList.remove('over'); }));
+  addEventListener('drop', e=>{ if(e.dataTransfer && e.dataTransfer.files.length) openFiles(e.dataTransfer.files); });
+  let idleT;
+  addEventListener('mousemove', e=>{
+    stage.classList.remove('idle'); clearTimeout(idleT);
+    $('#toolbar').classList.toggle('on', e.clientY > innerHeight-120);
+    idleT=setTimeout(()=>{ stage.classList.add('idle'); $('#toolbar').classList.remove('on'); }, 2500);
+  });
+  addEventListener('keydown', e=>{
+    if(e.target.tagName==='INPUT') return;
+    const k=e.key;
+    if(['ArrowRight','ArrowDown','PageDown',' ','Enter'].includes(k)){ e.preventDefault(); handle({t:'next'}); }
+    else if(['ArrowLeft','ArrowUp','PageUp','Backspace'].includes(k)){ e.preventDefault(); handle({t:'prev'}); }
+    else if(k==='Home') handle({t:'goto',i:0});
+    else if(k==='End') handle({t:'goto',i:S.slides.length-1});
+    else if(k==='b'||k==='B'){ handle({t:'blur',on:!S.fx.blurOn}); }
+    else if(k==='k'||k==='K'||k==='.') handle({t:'black'});
+    else if(k==='w'||k==='W'||k===',') handle({t:'white'});
+    else if(k==='t'||k==='T') handle({t:'timer',a:'toggle'});
+    else if(k==='c'||k==='C') handle({t:'clear'});
+    else if(k==='q'||k==='Q') act('qr');
+    else if(k==='f'||k==='F') toggleFull();
+    else if(k==='Escape') resetFx();
+  });
+
+  if(location.protocol==='file:') $('#fileNote').classList.remove('hidden');
+  let id=lsGet('pp-host-id'); if(!id){ id=randId(6); lsSet('pp-host-id',id); }
+  startPeer(id); layout(); applyFx();
+}
+
+/* =====================================================================
+   REMOTE (PHONE)
+   ===================================================================== */
+function remoteMain(){
+  $('#remote').classList.remove('hidden');
+  const pad=$('#pad'), padCanvas=$('#padCanvas'), pctx=padCanvas.getContext('2d'), padDot=$('#padDot');
+  const R={ peer:null, conn:null, hostId:null, st:null, mode:'pointer', aspect:16/9, retryT:null, connecting:false,
+            pen:{color:'#ff3b30',w:5}, spotR:.13, lensZ:2.5, zoomS:2.2, timer:null, tKind:'down', localStrokes:[], cur:null, lastIdx:-1 };
+
+  const hid=location.hash.startsWith('#r=') ? location.hash.slice(3).trim().toLowerCase() : '';
+  if(hid) { R.hostId=hid; connect(); } else showCodeEntry();
+
+  function showCodeEntry(msg){
+    $('#rConnect').classList.remove('hidden'); if(msg) $('#rMsg').textContent=msg;
+    $('#codeInput').focus();
+  }
+  $('#codeGo').addEventListener('click', ()=>{
+    const v=$('#codeInput').value.trim().toLowerCase(); if(v.length<4) return;
+    R.hostId=v; history.replaceState(null,'','#r='+v); $('#rConnect').classList.add('hidden'); connect();
+  });
+
+  /* ---------- connection ---------- */
+  function setStatus(txt, cls){ $('#rStatus').textContent=txt; $('#rDot').className='dot '+(cls||''); }
+  function banner(show, txt){ $('#rBanner').classList.toggle('hidden',!show); if(txt) $('#rBannerText').textContent=txt; }
+  function connect(){
+    if(R.conn && R.conn.open) return;
+    clearTimeout(R.retryT);
+    setStatus('연결 중…');
+    if(!R.peer || R.peer.destroyed){
+      R.peer=new Peer({debug:1});
+      R.peer.on('open', openConn);
+      R.peer.on('error', e=>{
+        R.connecting=false;
+        if(e.type==='peer-unavailable'){ setStatus('PC를 찾을 수 없음','bad'); banner(true,'PC에서 프리젠터 화면이 열려 있는지, 코드가 맞는지 확인하세요'); }
+        else { setStatus('연결 오류','bad'); banner(true,'연결 오류 ('+e.type+') – 다시 시도합니다'); }
+        scheduleRetry();
+      });
+      R.peer.on('disconnected', ()=>{ if(!R.peer.destroyed) setTimeout(()=>{ try{ R.peer.reconnect(); }catch(e){} },1000); });
+    } else if(R.peer.open) openConn();
+    else if(R.peer.disconnected) { try{ R.peer.reconnect(); }catch(e){} }
+  }
+  function openConn(){
+    if(R.connecting || (R.conn && R.conn.open)) return;
+    R.connecting=true;
+    const c=R.peer.connect(PEER_PREFIX+R.hostId, {reliable:true, serialization:'json'});
+    R.conn=c;
+    const to=setTimeout(()=>{ if(!c.open){ R.connecting=false; try{c.close()}catch(e){} scheduleRetry(); } }, 9000);
+    c.on('open', ()=>{ clearTimeout(to); R.connecting=false; setStatus('연결됨','ok'); banner(false); send({t:'hello'}); vib(30); wake(); });
+    c.on('data', onData);
+    c.on('close', ()=>{ R.connecting=false; if(R.conn===c){ setStatus('연결 끊김','bad'); banner(true,'연결이 끊어졌습니다 – 자동으로 다시 연결합니다'); scheduleRetry(); } });
+    c.on('error', ()=>{ R.connecting=false; scheduleRetry(); });
+  }
+  function scheduleRetry(){ clearTimeout(R.retryT); R.retryT=setTimeout(connect, 3000); }
+  $('#rRetry').addEventListener('click', ()=>{ R.connecting=false; if(R.peer && !R.peer.open){ try{R.peer.destroy()}catch(e){} R.peer=null; } connect(); });
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ if(!R.conn || !R.conn.open) connect(); wake(); } });
+  function send(o){ try{ if(R.conn && R.conn.open){ R.conn.send(o); return true; } }catch(e){} return false; }
+  function vib(ms){ try{ navigator.vibrate && navigator.vibrate(ms); }catch(e){} }
+  let lock=null;
+  async function wake(){ try{ if('wakeLock' in navigator && (!lock || lock.released)) lock=await navigator.wakeLock.request('screen'); }catch(e){} }
+
+  /* ---------- incoming ---------- */
+  function onData(d){
+    if(d.t==='state'){
+      R.st=d;
+      if(Math.abs(d.aspect-R.aspect)>.01){ R.aspect=d.aspect; sizePad(); }
+      $('#rPage').textContent = d.mode==='slides' ? `${d.idx+1} / ${d.total}` : ({share:'화면공유',board:'칠판',none:'대기'}[d.mode]||'–');
+      $('#nav').classList.toggle('disabled', !d.canNav);
+      $('#slideSec').classList.toggle('hidden', d.mode!=='slides');
+      $('#tBlur').classList.toggle('on', d.fx.blurOn);
+      $('#tBlack').classList.toggle('on', d.fx.black);
+      $('#tWhite').classList.toggle('on', d.fx.white);
+      $('#blurRange').value=d.fx.blur;
+      $$('#trans .chip').forEach(c=>c.classList.toggle('on', c.dataset.tr===d.fx.transition));
+      R.zoomOn=d.zoomOn; R.zoomS=d.zoomS; R.spotR=d.spotR; R.lensZ=d.lensZ; R.pen=d.pen;
+      if(d.idx!==R.lastIdx){ R.lastIdx=d.idx; R.localStrokes=[]; drawLocal(); }
+      renderCtx(); onTimer(d.timer);
+      $('#jumpInput').max=d.total;
+    } else if(d.t==='thumb'){
+      pad.style.backgroundImage = d.cur? `url(${d.cur})` : 'none';
+      $('#pvCur').src = d.cur || ''; $('#pvNext').src = d.next || '';
+      $('#pvNext').parentElement.style.visibility = d.next? 'visible':'hidden';
+    } else if(d.t==='timer') onTimer(d);
+  }
+  function onTimer(t){
+    if(!t) return; R.timer=t;
+    const txt = t.ended? '종료!' : (t.kind==='down'? fmt(t.ms) : fmtUp(t.ms));
+    $('#tDisp').textContent=txt; $('#tDisp').classList.toggle('end', !!t.ended);
+    const mini=$('#rTimerMini'); mini.textContent='⏱ '+txt; mini.className='pill'+(t.running?' run':'')+(t.ended?' end':'');
+    const tg=$('#tToggle'); tg.textContent=t.running?'⏸ 일시정지':'▶ 시작'; tg.classList.toggle('pause', t.running);
+    $('#tShow').classList.toggle('on', t.show); $('#tBig').classList.toggle('on', t.big);
+    $$('[data-tk]').forEach(c=>c.classList.toggle('on', c.dataset.tk===t.kind));
+    $('#tPresets').style.opacity = t.kind==='down'?1:.4;
+    if(t.ended && !R.vibEnded){ R.vibEnded=true; vib([300,150,300,150,300]); } if(!t.ended) R.vibEnded=false;
+  }
+
+  /* ---------- pad ---------- */
+  function sizePad(){
+    const wrapW=pad.parentElement.clientWidth, maxH=Math.min(innerHeight*.42, 420);
+    let w=wrapW, hh=w/R.aspect; if(hh>maxH){ hh=maxH; w=hh*R.aspect; }
+    pad.style.width=w+'px'; pad.style.height=hh+'px';
+    const dpr=devicePixelRatio||1; padCanvas.width=Math.round(w*dpr); padCanvas.height=Math.round(hh*dpr); drawLocal();
+  }
+  addEventListener('resize', sizePad); sizePad();
+  const HINTS={ pointer:'손가락 위치로 PC 화면의 마우스 포인터가 움직입니다 · 톡 치면 클릭',
+    laser:'누르고 있는 동안 빨간 레이저가 보입니다', spot:'누른 곳만 밝게 비춥니다 (손을 떼면 해제)',
+    lens:'누른 곳을 돋보기로 크게 보여줍니다', zoom:'누른 곳을 중심으로 화면 전체를 확대 · 두 손가락으로 배율 조절',
+    pen:'화면에 직접 판서합니다 (슬라이드를 넘기면 지워짐)' };
+  function renderCtx(){
+    const m=R.mode, ctx=$('#ctx'); $('#padHint').textContent=HINTS[m];
+    let html='';
+    if(m==='spot') html=`<label>원 크기</label><input type="range" id="cR" min="5" max="35" value="${Math.round(R.spotR*100)}">`;
+    else if(m==='lens') html=`<label>돋보기 배율</label><input type="range" id="cR" min="15" max="60" value="${Math.round(R.lensZ*10)}">`;
+    else if(m==='zoom') html=`<label>확대 배율</label><input type="range" id="cR" min="12" max="60" value="${Math.round(R.zoomS*10)}"><button class="sbtn ${R.zoomOn?'on':''}" id="cOff">${R.zoomOn?'확대 해제':'확대 안 됨'}</button>`;
+    else if(m==='pen'){
+      html=['#ff3b30','#ffcc00','#34c759','#0a84ff','#ffffff','#111111'].map(c=>`<button class="sw ${R.pen.color===c?'on':''}" data-c="${c}" style="background:${c}"></button>`).join('')
+        + `<button class="sbtn ${R.pen.w<=4?'on':''}" data-w="3">가늘게</button><button class="sbtn ${R.pen.w>4&&R.pen.w<10?'on':''}" data-w="6">보통</button><button class="sbtn ${R.pen.w>=10?'on':''}" data-w="12">굵게</button><button class="sbtn" id="cUndo">↶</button>`;
+    } else if(m==='pointer') html=`<label>탭 = 클릭 · 포인터는 4초 후 자동으로 사라집니다</label>`;
+    else html=`<label>누르는 동안만 표시됩니다</label>`;
+    if(ctx.dataset.m===m && m!=='pen' && m!=='zoom') return; // keep slider while dragging
+    ctx.dataset.m=m; ctx.innerHTML=html;
+    const r=$('#cR');
+    if(r) r.addEventListener('input', ()=>{ const v=+r.value;
+      if(m==='spot'){ R.spotR=v/100; send({t:'spotR',v:R.spotR}); }
+      if(m==='lens'){ R.lensZ=v/10; send({t:'lensZ',v:R.lensZ}); }
+      if(m==='zoom'){ R.zoomS=v/10; send({t:'zoomS',v:R.zoomS}); } });
+    const off=$('#cOff'); if(off) off.addEventListener('click', ()=>{ send({t:'zoomOff'}); vib(15); });
+    $$('#ctx [data-c]').forEach(b=>b.addEventListener('click', ()=>{ R.pen.color=b.dataset.c; send({t:'pen',v:{color:R.pen.color}}); ctx.dataset.m=''; renderCtx(); }));
+    $$('#ctx [data-w]').forEach(b=>b.addEventListener('click', ()=>{ R.pen.w=+b.dataset.w; send({t:'pen',v:{w:R.pen.w}}); ctx.dataset.m=''; renderCtx(); }));
+    const u=$('#cUndo'); if(u) u.addEventListener('click', ()=>{ send({t:'undo'}); R.localStrokes.pop(); drawLocal(); });
+  }
+  $$('#modes .mode').forEach(b=>b.addEventListener('click', ()=>{
+    R.mode=b.dataset.m; $$('#modes .mode').forEach(x=>x.classList.toggle('on',x===b)); renderCtx(); vib(10);
+  }));
+  renderCtx();
+
+  function drawLocal(){
+    const W=padCanvas.width, H=padCanvas.height; pctx.clearRect(0,0,W,H);
+    for(const s of R.localStrokes){ if(!s.pts.length) continue; pctx.strokeStyle=s.color; pctx.lineWidth=s.w*W/1000; pctx.lineCap='round'; pctx.lineJoin='round';
+      pctx.beginPath(); pctx.moveTo(s.pts[0][0]*W,s.pts[0][1]*H); for(const p of s.pts) pctx.lineTo(p[0]*W,p[1]*H); pctx.stroke(); }
+  }
+  const ptrs=new Map(); let downInfo=null, pending=null, raf=0, pinch=null;
+  function norm(e){ const r=pad.getBoundingClientRect(); return { x:clamp((e.clientX-r.left)/r.width,0,1), y:clamp((e.clientY-r.top)/r.height,0,1) }; }
+  function flush(){ raf=0; if(pending){ send(pending); pending=null; } }
+  function queue(o){ pending=o; if(!raf) raf=requestAnimationFrame(flush); }
+  function showDot(p,on){ const r=pad.getBoundingClientRect(); padDot.style.left=(p.x*r.width)+'px'; padDot.style.top=(p.y*r.height)+'px'; padDot.style.opacity=on?1:0; }
+  pad.addEventListener('pointerdown', e=>{
+    e.preventDefault(); pad.setPointerCapture(e.pointerId); wake();
+    const p=norm(e); ptrs.set(e.pointerId,p); pad.classList.add('active');
+    if(ptrs.size===2 && R.mode==='zoom'){ const [a,b]=[...ptrs.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||.01, s:R.zoomS}; return; }
+    if(ptrs.size>1) return;
+    downInfo={x:p.x,y:p.y,t:performance.now(),moved:0};
+    if(pending){ send(pending); pending=null; }
+    send({t:'pt',m:R.mode,d:'down',x:p.x,y:p.y}); showDot(p,true);
+    if(R.mode==='pen'){ R.cur={color:R.pen.color,w:R.pen.w,pts:[[p.x,p.y]]}; R.localStrokes.push(R.cur); drawLocal(); }
+  });
+  pad.addEventListener('pointermove', e=>{
+    if(!ptrs.has(e.pointerId)) return;
+    const p=norm(e); ptrs.set(e.pointerId,p);
+    if(pinch && ptrs.size>=2){ const [a,b]=[...ptrs.values()]; R.zoomS=clamp(pinch.s*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d,1.2,6); queue({t:'zoomS',v:R.zoomS}); return; }
+    if(ptrs.size>1 || !downInfo) return;
+    downInfo.moved=Math.max(downInfo.moved, Math.hypot(p.x-downInfo.x,p.y-downInfo.y));
+    showDot(p,true);
+    if(R.mode==='pen'){ send({t:'pt',m:'pen',d:'move',x:p.x,y:p.y}); if(R.cur){ R.cur.pts.push([p.x,p.y]); drawLocal(); } }
+    else queue({t:'pt',m:R.mode,d:'move',x:p.x,y:p.y});
+  });
+  function end(e){
+    if(!ptrs.has(e.pointerId)) return;
+    const p=norm(e); ptrs.delete(e.pointerId);
+    if(pinch){ if(ptrs.size===0){ pinch=null; downInfo=null; pad.classList.remove('active'); showDot(p,false); renderCtx(); send({t:'pt',m:R.mode,d:'up',x:p.x,y:p.y}); } return; }
+    if(ptrs.size>0) return;
+    if(pending){ send(pending); pending=null; }
+    send({t:'pt',m:R.mode,d:'up',x:p.x,y:p.y});
+    if(R.mode==='pointer' && downInfo && downInfo.moved<.03 && performance.now()-downInfo.t<350){ send({t:'click',x:p.x,y:p.y}); vib(20); }
+    R.cur=null; downInfo=null; pad.classList.remove('active'); showDot(p,false);
+  }
+  pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
+
+  /* ---------- buttons ---------- */
+  const tap=(sel,fn)=>$(sel).addEventListener('click', ()=>{ fn(); vib(15); });
+  tap('#bNext', ()=>send({t:'next'})); tap('#bPrev', ()=>send({t:'prev'}));
+  tap('#bFirst', ()=>send({t:'goto',i:0})); tap('#bLast', ()=>R.st && send({t:'goto',i:R.st.total-1}));
+  tap('#bJump', ()=>{ const v=+$('#jumpInput').value; if(v>=1) send({t:'goto',i:v-1}); $('#jumpInput').blur(); });
+  tap('#tBlur', ()=>send({t:'blur',on:!(R.st&&R.st.fx.blurOn), v:+$('#blurRange').value}));
+  $('#blurRange').addEventListener('input', e=>queue({t:'blur',on:true,v:+e.target.value}));
+  tap('#tBlack', ()=>send({t:'black'})); tap('#tWhite', ()=>send({t:'white'}));
+  tap('#tClear', ()=>{ send({t:'clear'}); R.localStrokes=[]; drawLocal(); });
+  tap('#bResetFx', ()=>send({t:'reset'}));
+  $$('[data-fx]').forEach(b=>b.addEventListener('click', ()=>{ send({t:'burst',v:b.dataset.fx}); vib(25); }));
+  $$('#trans .chip').forEach(b=>b.addEventListener('click', ()=>{ send({t:'transition',v:b.dataset.tr}); vib(10); }));
+  $$('#tPresets [data-ms]').forEach(b=>b.addEventListener('click', ()=>{ send({t:'timer',a:'set',ms:+b.dataset.ms}); vib(15); }));
+  $$('[data-add]').forEach(b=>b.addEventListener('click', ()=>{ send({t:'timer',a:'add',ms:+b.dataset.add}); vib(10); }));
+  $$('[data-tk]').forEach(b=>b.addEventListener('click', ()=>{ send({t:'timer',a:'kind',v:b.dataset.tk}); vib(10); }));
+  tap('#tToggle', ()=>send({t:'timer',a:'toggle'}));
+  tap('#tReset', ()=>send({t:'timer',a:'reset'}));
+  tap('#tShow', ()=>send({t:'timer',a:'show',v:!(R.timer&&R.timer.show)}));
+  tap('#tBig', ()=>send({t:'timer',a:'big',v:!(R.timer&&R.timer.big)}));
+}
+</script>
+</body>
+</html>
